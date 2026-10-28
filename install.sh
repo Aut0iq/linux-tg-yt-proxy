@@ -22,9 +22,8 @@ command -v systemctl >/dev/null || die "systemd is required"
 # Piped from curl: fetch the whole repo, then run that copy.
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)
 if [ ! -f "$SRC/yt-proxy.py" ]; then
-  tmp=$(mktemp -d); auth=()
-  [ -n "${GH_TOKEN:-}" ] && auth=(-H "Authorization: Bearer $GH_TOKEN")  # only while the repo is private
-  curl -fsSL "${auth[@]}" "https://api.github.com/repos/$REPO/tarball/${REF:-main}" |
+  tmp=$(mktemp -d)
+  curl -fsSL "https://api.github.com/repos/$REPO/tarball/${REF:-main}" |
     tar xz -C "$tmp" --strip-components=1 || die "could not download $REPO"
   exec bash "$tmp/install.sh" "$@" </dev/null
 fi

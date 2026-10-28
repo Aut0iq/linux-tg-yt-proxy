@@ -84,28 +84,13 @@ flowchart LR
 
 ## Установка
 
-### Публичный репозиторий
+Выполните на сервере одну команду:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Aut0iq/linux-tg-yt-proxy/main/install.sh | sudo bash
 ```
 
-### Закрытый репозиторий
-
-Нужен токен GitHub с доступом на чтение репозитория (`gh auth token` или fine-grained Personal Access Token с правом `Contents: Read`). Токен нужен дважды: для скачивания `install.sh` и для скачивания остальных файлов самим установщиком.
-
-```bash
-T=ваш_токен; curl -fsSL -H "Authorization: Bearer $T" https://raw.githubusercontent.com/Aut0iq/linux-tg-yt-proxy/main/install.sh | sudo GH_TOKEN=$T bash
-```
-
-### Из локального клона
-
-```bash
-git clone https://github.com/Aut0iq/linux-tg-yt-proxy
-sudo bash linux-tg-yt-proxy/install.sh
-```
-
-Запущенный через конвейер (`curl | bash`), установщик не находит рядом с собой остальных файлов. Тогда он скачивает архив репозитория через `api.github.com/repos/Aut0iq/linux-tg-yt-proxy/tarball/<REF>` (по умолчанию `REF=main`) и запускает уже полную копию.
+Установщик скачивает остальные файлы репозитория сам (архив `main` через `api.github.com`), поэтому клонировать репозиторий не нужно. Та же команда используется для повторного подбора настроек и обновления.
 
 ### Ход установки
 
@@ -283,7 +268,7 @@ tg-ws-proxy принимает от клиента обфусцированны�
 | `YT_PORT` | `1080` | Порт прокси YouTube (HTTP, SOCKS5, PAC) |
 | `YT_STRATEGY` | `disorder` | `none`, `split` или `disorder`, выбирается автоматически |
 | `TG_PORT` | `1443` | Порт MTProto-прокси |
-| `TG_SECRET` | `4bb8…7a92` | 32 hex-символа, в ссылке передаётся с префиксом `dd` |
+| `TG_SECRET` | `0123…cdef` | 32 hex-символа, в ссылке передаётся с префиксом `dd` |
 | `TG_ARGS` | `--dc-ip 2:149.154.167.220 --dc-ip 4:149.154.167.220` | Дополнительные аргументы tg-ws-proxy, подбираются автоматически |
 
 Чтобы сменить значения вручную, отредактируйте файл и выполните `systemctl restart yt-proxy tg-ws-proxy`. Повторный запуск установщика сохранит порты и секрет, но заново подберёт `YT_STRATEGY` и `TG_ARGS`.
@@ -295,7 +280,6 @@ tg-ws-proxy принимает от клиента обфусцированны�
 | `YT_PORT`, `TG_PORT` | `1080`, `1443` | Порты при первой установке |
 | `TG_SECRET` | случайный | Секрет при первой установке, например при переносе со старого сервера |
 | `TG_WS_PROXY_REF` | `307a384…` | Коммит Flowseal/tg-ws-proxy |
-| `GH_TOKEN` | — | Токен для скачивания из закрытого репозитория |
 | `REF` | `main` | Ветка или тег этого репозитория при запуске через `curl \| bash` |
 
 Если конфигурационный файл уже существует, значения из него имеют приоритет над переменными окружения.
@@ -323,7 +307,7 @@ tg-ws-proxy принимает от клиента обфусцированны�
 systemctl status yt-proxy tg-ws-proxy                 # состояние служб
 journalctl -u yt-proxy -u tg-ws-proxy -b              # журналы с момента загрузки
 journalctl -u tg-ws-proxy -f                          # журнал Telegram-прокси в реальном времени
-sudo bash install.sh                                  # повторный подбор после смены провайдера или симптомов
+curl -fsSL https://raw.githubusercontent.com/Aut0iq/linux-tg-yt-proxy/main/install.sh | sudo bash   # повторный подбор
 
 # ручные проверки
 curl -s http://127.0.0.1:1080/proxy.pac

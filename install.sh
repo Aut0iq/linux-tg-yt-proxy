@@ -3,6 +3,8 @@
 # Installs two services, picks the settings that work best on this network, checks everything.
 #   curl -fsSL https://raw.githubusercontent.com/Aut0iq/linux-tg-yt-proxy/main/install.sh | sudo bash
 # Re-run it any time to re-tune; ports and the Telegram secret are kept.
+# Only this machine, no LAN access:  ... | sudo LISTEN_ADDR=127.0.0.1 bash
+# No measuring (e.g. behind a VPN), use the values from README tests:  ... | sudo SKIP_TUNING=1 bash
 set -euo pipefail
 
 REPO=Aut0iq/linux-tg-yt-proxy
@@ -16,7 +18,9 @@ warn() { printf '\033[1;33m!!\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "run as root: sudo bash install.sh"
-command -v apt-get >/dev/null || die "only Debian/Ubuntu (apt) are supported"
+if command -v apt-get >/dev/null; then PKG=apt
+elif command -v pacman >/dev/null; then PKG=pacman
+else die "only Debian/Ubuntu (apt) and Arch (pacman) are supported"; fi
 command -v systemctl >/dev/null || die "systemd is required"
 
 # Piped from curl: fetch the whole repo, then run that copy.
@@ -29,12 +33,25 @@ if [ ! -f "$SRC/yt-proxy.py" ]; then
 fi
 
 say "Installing packages"
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq --no-install-recommends python3 python3-venv curl ca-certificates iproute2 openssl >/dev/null
+if [ "$PKG" = apt ]; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq --no-install-recommends python3 python3-venv curl ca-certificates iproute2 openssl >/dev/null
+else
+  # no -y: a db refresh without a full upgrade is a partial upgrade, which Arch does not support
+  pacman -S --needed --noconfirm python curl ca-certificates iproute2 openssl >/dev/null
+fi
 
 # keep ports and the Telegram secret on re-runs, so clients keep working
+want_listen=${LISTEN_ADDR:-}   # set on the command line, wins over the saved value
+want_strategy=${YT_STRATEGY:-}
+SKIP_TUNING=${SKIP_TUNING:-}
+BOT_API_IP=${BOT_API_IP:-149.154.167.220}
 if [ -f "$CONF" ]; then . "$CONF"; fi
+LISTEN_ADDR=${want_listen:-${LISTEN_ADDR:-0.0.0.0}}
+# the final check and the bot proxy use 127.0.0.1, so any other single address would break them
+[[ $LISTEN_ADDR =~ ^(0\.0\.0\.0|127\.0\.0\.1)$ ]] || die "LISTEN_ADDR must be 0.0.0.0 (whole LAN) or 127.0.0.1 (this machine only)"
+[[ $BOT_API_IP =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "BOT_API_IP must be an IPv4 address"
 YT_PORT=${YT_PORT:-1080}
 TG_PORT=${TG_PORT:-1443}
 TG_SECRET=${TG_SECRET:-$(openssl rand -hex 16)}
@@ -69,10 +86,15 @@ yt_score() {  # proxy -> successes out of 12
   echo "$ok"
 }
 
+if [ -n "$want_strategy" ] || [ -n "$SKIP_TUNING" ]; then
+  YT_STRATEGY=${want_strategy:-disorder}
+  [[ $YT_STRATEGY =~ ^(none|split|disorder)$ ]] || die "YT_STRATEGY must be none, split or disorder"
+  say "YouTube method: $YT_STRATEGY (set, not measured)"
+else
 say "Choosing the YouTube method (none / split / disorder)"
 best=0; YT_STRATEGY=disorder
 for s in none split disorder; do
-  YT_PORT=18080 YT_STRATEGY=$s python3 "$DIR/yt-proxy.py" >/dev/null & pid=$!
+  LISTEN_ADDR=127.0.0.1 YT_PORT=18080 YT_STRATEGY=$s python3 "$DIR/yt-proxy.py" >/dev/null & pid=$!
   wait_port 18080
   ok=$(yt_score http://127.0.0.1:18080)
   kill "$pid"; wait "$pid" 2>/dev/null || true
@@ -82,9 +104,13 @@ for s in none split disorder; do
 done
 [ "$best" -gt 0 ] || warn "YouTube did not answer with any method, keeping 'disorder'"
 echo "    -> $YT_STRATEGY"
+fi
 
-say "Choosing Telegram server addresses (DC1-DC5)"
 TG_ARGS=""
+if [ -n "$SKIP_TUNING" ]; then
+  say "Telegram server addresses: tg-ws-proxy defaults (DC2/DC4 direct, others through Cloudflare)"
+else
+say "Choosing Telegram server addresses (DC1-DC5)"
 for dc in 1 2 3 4 5; do
   h=kws$dc.web.telegram.org; best=0; bip=""
   for ip in $( { ips "$h"; echo 149.154.167.220; } | awk 'NF && !s[$0]++'); do
@@ -94,10 +120,15 @@ for dc in 1 2 3 4 5; do
   if [ "$best" -ge 3 ]; then TG_ARGS+=" --dc-ip $dc:$bip"; echo "    DC$dc: $bip ($best/5)"
   else echo "    DC$dc: blocked, goes through Cloudflare"; fi
 done
+fi
 
 say "Checking the Bot API address (api.telegram.org)"
 tpl=$(ls /etc/cloud/templates/hosts.*.tmpl 2>/dev/null || true)  # cloud-init rebuilds /etc/hosts from these
 for f in /etc/hosts $tpl; do sed -i "/$MARK\$/d" "$f"; done
+if [ -n "$SKIP_TUNING" ]; then
+  for f in /etc/hosts $tpl; do echo "$BOT_API_IP api.telegram.org  $MARK" >>"$f"; done
+  echo "    -> pinned api.telegram.org to $BOT_API_IP in /etc/hosts (not measured)"
+else
 dns=$(ips api.telegram.org)
 best=-1; bip=""
 for ip in $( { echo "$dns"; echo 149.154.167.220; } | awk 'NF && !s[$0]++'); do
@@ -109,10 +140,12 @@ if [ "$best" -gt 0 ] && ! grep -qx "$bip" <<<"$dns"; then
   for f in /etc/hosts $tpl; do echo "$bip api.telegram.org  $MARK" >>"$f"; done
   echo "    -> pinned api.telegram.org to $bip in /etc/hosts"
 fi
+fi
 
 say "Starting services"
 cat >"$CONF" <<EOF
 # written by linux-tg-yt-proxy install.sh; re-run it to re-tune
+LISTEN_ADDR=$LISTEN_ADDR
 YT_PORT=$YT_PORT
 YT_STRATEGY=$YT_STRATEGY
 TG_PORT=$TG_PORT
@@ -141,14 +174,17 @@ EOF
 }
 unit yt-proxy "YouTube DPI bypass proxy (linux-tg-yt-proxy)" "/usr/bin/python3 -u $DIR/yt-proxy.py"
 unit tg-ws-proxy "Telegram MTProto proxy over WebSocket (linux-tg-yt-proxy)" \
-  "$DIR/venv/bin/python -u proxy/tg_ws_proxy.py --host 0.0.0.0 --port \${TG_PORT} --secret \${TG_SECRET} \$TG_ARGS"
+  "$DIR/venv/bin/python -u proxy/tg_ws_proxy.py --host \${LISTEN_ADDR} --port \${TG_PORT} --secret \${TG_SECRET} \$TG_ARGS"
 systemctl daemon-reload
 systemctl enable -q yt-proxy tg-ws-proxy
 systemctl restart yt-proxy tg-ws-proxy
 wait_port "$YT_PORT"; wait_port "$TG_PORT"; sleep 2
 
 say "Final check"
-IP=$(ip -4 route get 1.1.1.1 | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')
+[ -z "$SKIP_TUNING" ] || warn "SKIP_TUNING: if a VPN is on, these checks go through it and prove little"
+if [ "$LISTEN_ADDR" = 0.0.0.0 ]; then
+  IP=$(ip -4 route get 1.1.1.1 | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')
+else IP=$LISTEN_ADDR; fi
 mark() { if [ "$1" = "$2" ]; then echo OK; elif [ "$1" -gt 0 ]; then echo WARN; else echo FAIL; fi; }
 yt=$(yt_score "http://$IP:$YT_PORT")
 echo "    YouTube through $IP:$YT_PORT: $yt/12 $(mark "$yt" 12)"

@@ -12,6 +12,7 @@ YT_STRATEGY: none     - plain relay
 install.sh tries all three and keeps the one that works best on this network."""
 import asyncio, ipaddress, os, socket, struct, time
 
+HOST = os.environ.get('LISTEN_ADDR', '0.0.0.0')
 PORT = int(os.environ.get('YT_PORT', 1080))
 STRATEGY = os.environ.get('YT_STRATEGY', 'disorder')
 PAC = '''function FindProxyForURL(url, host) {
@@ -232,8 +233,8 @@ async def self_test_connect():
 async def main():
     self_test()
     await self_test_connect()
-    srv = await asyncio.start_server(handle, '0.0.0.0', PORT)
-    print('yt-proxy on :%d, strategy %s, PAC at /proxy.pac' % (PORT, STRATEGY), flush=True)
+    srv = await asyncio.start_server(handle, HOST, PORT)
+    print('yt-proxy on %s:%d, strategy %s, PAC at /proxy.pac' % (HOST, PORT, STRATEGY), flush=True)
     async with srv:
         await srv.serve_forever()
 
